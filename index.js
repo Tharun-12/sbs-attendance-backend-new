@@ -1,0 +1,25 @@
+// server.js
+const express = require('express');
+const cors = require('cors');
+const employeeRoutes = require('./sbs-attendance/routes/Employeeroutes');
+const attendanceRoutes = require("./sbs-attendance/routes/Attendanceroutes");
+const authRoutes = require("./sbs-attendance/routes/auth");
+
+const app = express();
+const port = 5000;
+
+// Middleware
+app.use(cors());
+app.use(express.json()); // <--- this is required to parse JSON body
+
+// For normal JSON routes
+app.use('/api/employees', employeeRoutes);
+app.use("/api/attendance", attendanceRoutes);
+app.use("/api", authRoutes);
+
+// Default route
+app.get('/', (req, res) => res.send('Employee Management API is running!'));
+
+app.listen(port, () => {
+  console.log(`Server listening at http://localhost:${port}`);
+});
