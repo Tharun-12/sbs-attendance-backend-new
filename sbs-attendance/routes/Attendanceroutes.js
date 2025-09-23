@@ -8,8 +8,31 @@ const getTodayDate = () => {
   return today.toISOString().split("T")[0];
 };
 
-// -------------------- Check-In --------------------
-// Add this helper function to calculate distance
+// Helper: Get company location from database
+const getCompanyLocation = async () => {
+  try {
+    const [rows] = await db.query("SELECT latitude, longitude FROM company_locations ORDER BY id DESC LIMIT 1");
+    if (rows.length > 0) {
+      return {
+        latitude: parseFloat(rows[0].latitude),
+        longitude: parseFloat(rows[0].longitude)
+      };
+    }
+    // Default fallback location
+    return {
+      latitude: 24.071207,
+      longitude: 82.622665
+    };
+  } catch (err) {
+    console.error("Error fetching company location:", err);
+    return {
+      latitude: 24.071207,
+      longitude: 82.622665
+    };
+  }
+};
+
+// Calculate distance between two coordinates using Haversine formula
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371; // Earth's radius in kilometers
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -23,44 +46,54 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return distance;
 };
 
-// Update the check-in endpoint to validate location
+// Validate user location against company location
+const validateLocation = async (userLocation) => {
+  try {
+    const companyLocation = await getCompanyLocation();
+    
+    if (userLocation && userLocation !== "N/A") {
+      const [userLat, userLon] = userLocation.split(',').map(coord => parseFloat(coord.trim()));
+      
+      if (isNaN(userLat) || isNaN(userLon)) {
+        return { valid: false, error: "Invalid location format" };
+      }
+      
+      const distance = calculateDistance(
+        userLat, 
+        userLon, 
+        companyLocation.latitude, 
+        companyLocation.longitude
+      );
+      
+      if (distance > 1) { // More than 1km away
+        return { 
+          valid: false, 
+          error: `You are ${distance.toFixed(2)}km away from company. Must be within 1km.`,
+          distance: distance
+        };
+      }
+      
+      return { valid: true, distance: distance, companyLocation: companyLocation };
+    }
+    
+    return { valid: false, error: "Location not provided" };
+  } catch (err) {
+    console.error("Location validation error:", err);
+    return { valid: false, error: "Error validating location" };
+  }
+};
+
+// -------------------- Check-In --------------------
 router.post("/checkin", async (req, res) => {
   const { employee_id, location } = req.body;
   const date = getTodayDate();
   const now = new Date();
-  
-  // Company location (static)
-  const companyLocation = {
-    latitude: 15.46919412,
-    longitude: 78.48573422
-  };
 
   try {
-    // Validate location if provided
-    if (location && location !== "N/A") {
-      try {
-        const [userLat, userLon] = location.split(',').map(coord => parseFloat(coord.trim()));
-        
-        if (isNaN(userLat) || isNaN(userLon)) {
-          return res.status(400).json({ message: "Invalid location format" });
-        }
-        
-        const distance = calculateDistance(
-          userLat, 
-          userLon, 
-          companyLocation.latitude, 
-          companyLocation.longitude
-        );
-        
-        if (distance > 1) { // More than 1km away
-          return res.status(400).json({ 
-            message: `You are ${distance.toFixed(2)}km away from company. Must be within 1km to check in.` 
-          });
-        }
-      } catch (err) {
-        console.error("Location validation error:", err);
-        return res.status(400).json({ message: "Error validating location" });
-      }
+    // Validate location
+    const locationValidation = await validateLocation(location);
+    if (!locationValidation.valid) {
+      return res.status(400).json({ message: locationValidation.error });
     }
 
     // Check if already checked in
@@ -89,12 +122,17 @@ router.post("/checkin", async (req, res) => {
       );
     }
 
-    res.json({ message: "Checked in successfully", check_in: now });
+    res.json({ 
+      message: "Checked in successfully", 
+      check_in: now,
+      companyLocation: locationValidation.companyLocation
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Check-in failed", error: err.message });
   }
 });
+
 // -------------------- Lunch Start --------------------
 router.post("/lunchstart", async (req, res) => {
   const { employee_id, location } = req.body;
@@ -102,6 +140,12 @@ router.post("/lunchstart", async (req, res) => {
   const now = new Date();
 
   try {
+    // Validate location (must be within premise)
+    const locationValidation = await validateLocation(location);
+    if (!locationValidation.valid) {
+      return res.status(400).json({ message: locationValidation.error });
+    }
+
     const [rows] = await db.query(
       "SELECT * FROM attendance WHERE employee_id=? AND date=?",
       [employee_id, date]
@@ -124,7 +168,11 @@ router.post("/lunchstart", async (req, res) => {
       [now, location, employee_id, date]
     );
 
-    res.json({ message: "Lunch started successfully", lunch_start: now });
+    res.json({ 
+      message: "Lunch started successfully", 
+      lunch_start: now,
+      companyLocation: locationValidation.companyLocation
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Lunch start failed", error: err.message });
@@ -138,6 +186,12 @@ router.post("/lunchend", async (req, res) => {
   const now = new Date();
 
   try {
+    // Validate location (must be within premise)
+    const locationValidation = await validateLocation(location);
+    if (!locationValidation.valid) {
+      return res.status(400).json({ message: locationValidation.error });
+    }
+
     const [rows] = await db.query(
       "SELECT * FROM attendance WHERE employee_id=? AND date=?",
       [employee_id, date]
@@ -164,7 +218,11 @@ router.post("/lunchend", async (req, res) => {
       [now, location, employee_id, date]
     );
 
-    res.json({ message: "Lunch ended successfully", lunch_end: now });
+    res.json({ 
+      message: "Lunch ended successfully", 
+      lunch_end: now,
+      companyLocation: locationValidation.companyLocation
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Lunch end failed", error: err.message });
@@ -178,6 +236,12 @@ router.post("/checkout", async (req, res) => {
   const now = new Date();
 
   try {
+    // Validate location (must be within premise)
+    const locationValidation = await validateLocation(location);
+    if (!locationValidation.valid) {
+      return res.status(400).json({ message: locationValidation.error });
+    }
+
     const [rows] = await db.query(
       "SELECT * FROM attendance WHERE employee_id=? AND date=?",
       [employee_id, date]
@@ -200,14 +264,34 @@ router.post("/checkout", async (req, res) => {
       [now, location, employee_id, date]
     );
 
-    res.json({ message: "Checked out successfully", check_out: now });
+    res.json({ 
+      message: "Checked out successfully", 
+      check_out: now,
+      companyLocation: locationValidation.companyLocation
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Check-out failed", error: err.message });
   }
 });
 
-
+// -------------------- Get Company Location --------------------
+router.get("/company-location", async (req, res) => {
+  try {
+    const companyLocation = await getCompanyLocation();
+    res.json({
+      success: true,
+      data: companyLocation
+    });
+  } catch (err) {
+    console.error("Error fetching company location:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch company location",
+      error: err.message
+    });
+  }
+});
 
 router.get("/today", async (req, res) => {
   const { employee_id } = req.query;
@@ -230,7 +314,6 @@ router.get("/today", async (req, res) => {
   }
 });
 
-
 // -------------------- Get Attendance --------------------
 router.get("/:employee_id", async (req, res) => {
   const { employee_id } = req.params;
@@ -250,8 +333,6 @@ router.get("/:employee_id", async (req, res) => {
     res.status(500).json({ message: "Fetch attendance failed", error: err.message });
   }
 });
-
-
 
 // -------------------- Get Monthly Attendance --------------------
 router.get("/:employee_id/monthly/:year/:month", async (req, res) => {
@@ -273,8 +354,6 @@ router.get("/:employee_id/monthly/:year/:month", async (req, res) => {
     res.status(500).json({ message: "Fetch monthly attendance failed", error: err.message });
   }
 });
-
-
 
 // ✅ NEW: Get All Attendance Records with Employee Names (for Admin)
 router.get("/admin/all", async (req, res) => {
@@ -453,71 +532,5 @@ router.get("/users/all", async (req, res) => {
     });
   }
 });
-
-
-
-// ✅ DEBUG: Test database connection and data
-// router.get("/admin/debug", async (req, res) => {
-//   try {
-//     console.log('=== DEBUGGING ATTENDANCE API ===');
-    
-//     // Test 1: Check database connection
-//     const [testConnection] = await db.query("SELECT 1 as test");
-//     console.log('Database connection:', testConnection);
-    
-//     // Test 2: Check employees table
-//     const [employees] = await db.query("SELECT id, name, email FROM employees LIMIT 5");
-//     console.log(`Found ${employees.length} employees:`, employees);
-    
-//     // Test 3: Check attendance table structure
-//     const [attendanceStructure] = await db.query("DESCRIBE attendance");
-//     console.log('Attendance table structure:', attendanceStructure);
-    
-//     // Test 4: Check raw attendance data
-//     const [rawAttendance] = await db.query("SELECT * FROM attendance LIMIT 5");
-//     console.log(`Found ${rawAttendance.length} attendance records:`, rawAttendance);
-    
-//     // Test 5: Check the JOIN query
-//     const [joinResult] = await db.query(`
-//       SELECT 
-//         a.id,
-//         a.employee_id,
-//         a.date,
-//         a.check_in,
-//         a.status,
-//         e.name as employee_name
-//       FROM attendance a
-//       LEFT JOIN employees e ON a.employee_id = e.id
-//       LIMIT 5
-//     `);
-//     console.log(`JOIN query result (${joinResult.length} records):`, joinResult);
-    
-//     res.json({
-//       success: true,
-//       debug: {
-//         dbConnection: 'OK',
-//         employeesCount: employees.length,
-//         attendanceCount: rawAttendance.length,
-//         joinResultCount: joinResult.length,
-//         employees: employees,
-//         attendance: rawAttendance,
-//         joinResult: joinResult,
-//         tableStructure: attendanceStructure
-//       }
-//     });
-    
-//   } catch (err) {
-//     console.error('Debug error:', err);
-//     res.status(500).json({ 
-//       success: false,
-//       error: err.message,
-//       stack: err.stack
-//     });
-//   }
-// });
-
-
-
-
 
 module.exports = router;
