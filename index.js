@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const employeeRoutes = require('./sbs-attendance/routes/Employeeroutes');
 const attendanceRoutes = require("./sbs-attendance/routes/Attendanceroutes");
 const authRoutes = require("./sbs-attendance/routes/auth");
@@ -11,6 +12,19 @@ const port = 5000;
 // Middleware
 app.use(cors());
 app.use(express.json()); // <--- this is required to parse JSON body
+
+
+app.use(
+  '/uploads',
+  express.static(path.join(__dirname, 'sbs-attendance', 'uploads'), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.pdf')) {
+        res.setHeader('Content-Type', 'application/pdf');
+      }
+    },
+  })
+);
+
 
 // For normal JSON routes
 app.use('/api/employees', employeeRoutes);
