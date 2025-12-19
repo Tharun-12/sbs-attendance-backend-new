@@ -5,6 +5,7 @@ const path = require('path');
 const employeeRoutes = require('./sbs-attendance/routes/Employeeroutes');
 const attendanceRoutes = require("./sbs-attendance/routes/Attendanceroutes");
 const authRoutes = require("./sbs-attendance/routes/auth");
+const admindashboardRoutes = require("./sbs-attendance/routes/Admindashboard");
 
 const app = express();
 const port = 5000;
@@ -30,6 +31,7 @@ app.use(
 app.use('/api/employees', employeeRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api", authRoutes);
+app.use("/api", admindashboardRoutes);
 
 // Default route
 app.get('/', (req, res) => res.send('Employee Management API is running!'));
